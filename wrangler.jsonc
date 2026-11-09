@@ -1,0 +1,10 @@
+{
+  "name": "phone-bridge-mcp",
+  "main": "index.js",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "services": [
+    { "binding": "COMMAND", "service": "two-phone-command-server" }
+  ]
+}
