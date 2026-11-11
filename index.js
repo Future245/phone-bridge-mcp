@@ -5,7 +5,7 @@
 //
 // Protection, in this order:
 //   1. only requests from Anthropic's published address range are answered
-//   2. every request must carry the secret key (X-Bridge-Key)
+//   2. every request must carry the secret key (X-API-Key header, a name Claude's connector form approves)
 //   3. the trade tool needs an explicit confirmation value
 //   4. the command Worker enforces the emergency stop, a duplicate block and a trade cap
 //   5. Phone 2 itself refuses trades unless armed.txt exists and the cooldown has passed
@@ -68,7 +68,7 @@ async function safeEqual(a, b) {
 // Fails closed: if BRIDGE_KEY is not set, nobody gets in
 async function keyOk(request, env) {
   if (!env.BRIDGE_KEY) return false;
-  return safeEqual(request.headers.get("X-Bridge-Key") || "", env.BRIDGE_KEY);
+  return safeEqual(request.headers.get("X-API-Key") || "", env.BRIDGE_KEY);
 }
 
 // ------------------------------------------------------- command Worker access
