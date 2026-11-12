@@ -165,8 +165,11 @@ async function sendAndWait(env, body, maxMs, extraOk = "") {
   }
   if (sent.status === 429) {
     const t = sent.data && sent.data.trade_commands;
+    const o = sent.data && sent.data.order_counts;
     return reply(
       "Not sent: a limit was reached." +
+      (o ? ` Orders: ${o.orders_last_hour}/${o.cap_per_hour} in the last hour, ` +
+           `${o.orders_last_24h}/${o.cap_per_day} in 24 h.` : "") +
       (t ? ` Trade commands: ${t.last_hour}/${t.cap_per_hour} in the last hour, ` +
            `${t.last_24h}/${t.cap_per_day} in 24 h.` : ""),
       true
@@ -182,10 +185,10 @@ async function sendAndWait(env, body, maxMs, extraOk = "") {
 
 // ------------------------------------------------------------------- the tools
 
-const BUY_CONFIRM = "PLACE_10_BUYS_REAL_MONEY";
+const TRADE_CONFIRM = "PLACE_REAL_MONEY_TRADES";
 
 function createServer(env) {
-  const server = new McpServer({ name: "phone-bridge", version: "0.2.0" });
+  const server = new McpServer({ name: "phone-bridge", version: "0.3.0" });
 
   const safe = (fn) => async (args) => {
     try {
@@ -317,28 +320,42 @@ function createServer(env) {
   );
 
   server.registerTool(
-    "mt5_buy10",
+    "mt5_open_trades",
     {
       description:
-        "REAL MONEY. Places exactly 10 BUY market orders on Jump 10 Index at lot 1 in MetaTrader 5 " +
-        "on Phone 2. The size, symbol and count are fixed and cannot be changed here. " +
-        "ONLY call this when the user has clearly and explicitly asked, in this conversation, " +
-        "to place these buys now. Never call it on your own initiative, never as a test, and never " +
-        "to retry: if it times out, errors, or reports it is still running, do NOT send it again; " +
-        "use get_command_result and read_mt5_account to find out what happened. " +
-        "Phone 2 refuses unless trading is armed there, and refuses a second trade within 2 minutes. " +
-        "A SUCCESS here only means the script finished and fired its taps: afterwards check with " +
-        "read_mt5_account that margin is no longer 'none'. Waits up to about 55 seconds.",
+        "REAL MONEY. Opens `count` market orders (buy or sell) on one symbol at one lot size in " +
+        "MetaTrader 5 on Phone 2. Symbol, side, lot, count and the gap between orders are all chosen " +
+        "per call, so nothing is fixed. ONLY call this when the user has clearly and explicitly asked, " +
+        "in this conversation, for these exact trades now: use exactly the values they gave and ask if " +
+        "any of symbol, side, lot or count is missing. Never call it on your own initiative, never as a " +
+        "test, and never to retry: if it times out, errors, or reports it is still running, do NOT send " +
+        "it again; use get_command_result and read_mt5_account to find out what happened. The command " +
+        "Worker and Phone 2 each enforce their own limits (maximum lot, maximum orders per call and per " +
+        "hour/day, allowed symbols); Phone 2 also refuses unless trading is armed there and refuses a " +
+        "second trade within 2 minutes. If a limit blocks the trade, tell the user which one and let " +
+        "them decide: never work around a limit. A SUCCESS only means the script finished and fired its " +
+        "taps: afterwards check with read_mt5_account that margin is no longer 'none'. Waits up to " +
+        "about 55 seconds.",
       inputSchema: z.object({
+        symbol: z.string().min(2).max(32).describe("Exact MT5 symbol name, e.g. Jump 100 Index or USDCAD."),
+        side: z.enum(["buy", "sell"]),
+        lot: z.number().positive().describe("Lot size per order, e.g. 0.02."),
+        count: z.number().int().positive().describe("How many orders to open."),
+        gap: z
+          .number()
+          .min(0.05)
+          .max(2)
+          .optional()
+          .describe("Seconds between orders. Leave out for the default (0.1)."),
         confirm: z
-          .literal(BUY_CONFIRM)
+          .literal(TRADE_CONFIRM)
           .describe(
-            `Must be exactly ${BUY_CONFIRM}, and only after the user explicitly asked for these 10 buys.`
+            `Must be exactly ${TRADE_CONFIRM}, and only after the user explicitly asked for this trade.`
           ),
       }),
       annotations: { destructiveHint: true },
     },
-    safe(async () => {
+    safe(async ({ symbol, side, lot, count, gap }) => {
       // Pre-flight: never queue a trade for a dead receiver or during an emergency stop
       const st = await api(env, "/status");
       if (st.status !== 200 || !st.data) {
@@ -356,9 +373,9 @@ function createServer(env) {
       }
       return sendAndWait(
         env,
-        { action: "mt5_buy10" },
+        { action: "mt5_trade", symbol, side, lot, count, ...(gap !== undefined ? { gap } : {}) },
         55000,
-        "\n\nNote: this means the buy taps were fired. Verify with read_mt5_account."
+        "\n\nNote: this means the order taps were fired. Verify with read_mt5_account."
       );
     })
   );
